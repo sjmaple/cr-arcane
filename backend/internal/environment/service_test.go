@@ -348,6 +348,30 @@ func TestEnvironmentService_ResolveEdgeEnvironmentByToken_RejectsDisabledEnviron
 	require.Error(t, err)
 }
 
+func TestEnvironmentService_IsKnownAccessToken_TracksTokenWrites(t *testing.T) {
+	ctx := t.Context()
+	db := setupEnvironmentServiceTestDB(t)
+	createTestEnvironmentWithState(t, db, "env-known", "http://known.example", string(EnvironmentStatusOnline), false, new("seeded-token"))
+	svc := NewEnvironmentService(db, http.DefaultClient, nil, event.NewEventService(db, nil, nil), nil, nil)
+
+	require.False(t, svc.IsKnownAccessToken("seeded-token"))
+	require.NoError(t, svc.LoadAccessTokens(ctx))
+	require.True(t, svc.IsKnownAccessToken("seeded-token"))
+	require.False(t, svc.IsKnownAccessToken(strings.Repeat("x", maxAccessTokenLength+1)))
+
+	require.NoError(t, svc.linkEnvironmentApiKey(ctx, "env-known", "key-rotated", "rotated-token", "", "", "env-known"))
+	require.False(t, svc.IsKnownAccessToken("seeded-token"))
+	require.True(t, svc.IsKnownAccessToken("rotated-token"))
+
+	_, err := svc.UpdateEnvironment(ctx, "env-known", map[string]any{"access_token": "updated-token"}, nil, nil)
+	require.NoError(t, err)
+	require.False(t, svc.IsKnownAccessToken("rotated-token"))
+	require.True(t, svc.IsKnownAccessToken("updated-token"))
+
+	require.NoError(t, svc.DeleteEnvironment(ctx, "env-known", nil, nil))
+	require.False(t, svc.IsKnownAccessToken("updated-token"))
+}
+
 func createTestRegistry(t *testing.T, db *database.DB, id string) {
 	t.Helper()
 
